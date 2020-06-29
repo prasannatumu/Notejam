@@ -1,0 +1,288 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: |
+  Udagram CloudFormation Servers Deployment.
+  - Launch Configuration and Group
+  - Application Load Balancer
+  - Bastion Host
+  - IAM Service Role
+  - Security Group
+
+Parameters:
+
+  ENVIRONMENTNAME:
+    Description: An environment name that will be prefixed to resource names.
+    Type: String
+
+  WEBPORT:
+    Description: Enter the TCP Port.
+    Type: String
+    Default: 80
+
+  WEBSERVERAMI:
+    Description: The AMI used to deploy web severs. Default is Ubuntu18, ami-0d1cd67c26f5fca19
+    Type: String
+    Default: ami-0a243dbef00e96192
+
+  WEBSERVERTYPE:
+    Description: The instance type used to deploy web severs. Default is t2.medium
+    Type: String
+    Default: t2.micro
+
+  BASTIONAMI:
+    Description: The AMI used to deploy the bastion. Default is ami-0ce21b51cb31a48b8
+    Type: String
+    Default: ami-0a243dbef00e96192
+
+  BASTIONTYPE:
+    Description: The instance type used the bastion. Default is t2.micro
+    Type: String
+    Default: t2.micro
+
+  BASTIONKEY:
+    Description: The Key to deploy in the bastion
+    Type: String
+    Default: notejam
+
+  MYIP:
+    Description: Home IP to access the bastion
+    Type: String
+    Default: 192.168.0.9/32
+
+Resources:
+
+  S3READROLE:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: WebServersS3ReadRole
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement: 
+              - 
+                Effect: "Allow"
+                Action: 
+                  - S3:List*
+                  - S3:Get*
+                Resource: "*"
+
+  INSTANCEPROFILE:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref S3READROLE
+
+  BASTIONSECURITYGROUP:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MYIP
+      Tags: 
+        - Key: Environment
+          Value: !Ref ENVIRONMENTNAME
+        -
+          Key: Name
+          Value: !Sub ${ENVIRONMENTNAME}-BASTIONSECURITYGROUP
+      VpcId:
+        Fn::ImportValue: !Sub "${ENVIRONMENTNAME}-VPC"
+
+  BASTION:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      SecurityGroupIds:
+        - !Ref BASTIONSECURITYGROUP
+      KeyName: !Ref BASTIONKEY
+      ImageId: !Ref BASTIONAMI
+      InstanceType: !Ref BASTIONTYPE
+      SubnetId: 
+        Fn::ImportValue: !Sub "${ENVIRONMENTNAME}-PUBSUBNET1"
+      Tags: 
+        - Key: Environment
+          Value: !Ref ENVIRONMENTNAME
+        -
+          Key: Name
+          Value: !Sub ${ENVIRONMENTNAME}-BASTION
+
+  WEBSERVERSECURITYGROUP:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: WebServers Security Group
+      SecurityGroupEgress: 
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: !Ref WEBPORT
+          ToPort: !Ref WEBPORT
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+      Tags: 
+        - Key: Environment
+          Value: !Ref ENVIRONMENTNAME
+        -
+          Key: Name
+          Value: !Sub ${ENVIRONMENTNAME}-WEBSERVERGROUP
+      VpcId:
+        Fn::ImportValue: !Sub "${ENVIRONMENTNAME}-VPC"
+
+  LBSECURITYGROUP:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: LB Security Group
+      SecurityGroupEgress: 
+        - IpProtocol: tcp
+          FromPort: !Ref WEBPORT
+          ToPort: !Ref WEBPORT
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: !Ref WEBPORT
+          ToPort: !Ref WEBPORT
+          CidrIp: 0.0.0.0/0
+      Tags: 
+        - Key: Environment
+          Value: !Ref ENVIRONMENTNAME
+        -
+          Key: Name
+          Value: !Sub ${ENVIRONMENTNAME}-LBSECURITYGROUP
+      VpcId:
+        Fn::ImportValue: !Sub "${ENVIRONMENTNAME}-VPC"
+
+  WEBSERVERLAUNCH:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties: 
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sda1
+          Ebs: 
+            VolumeSize: 10
+            VolumeType: gp2
+      ImageId: !Ref WEBSERVERAMI
+      InstanceType: !Ref WEBSERVERTYPE
+      IamInstanceProfile: !Ref INSTANCEPROFILE
+      SecurityGroups:
+        - !Ref WEBSERVERSECURITYGROUP
+      UserData:
+        Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y git
+            git clone https://github.com/komarserjio/notejam.git
+            cd notejam/django/
+            virtualenv -p /usr/bin/python venv
+            source venv/bin/activate
+            pip install -r requirements.txt
+            cd notejam/
+            ./manage.py syncdb --noinput
+            echo "from django.contrib.auth.models import User; User.objects.create_superuser('admin', 'admin@example.com', 'pass')" | python manage.py shell
+            ./manage.py migrate
+            ./manage.py runserver
+
+  WEBTARGETGROUP:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: "/HTTP:8000/signin/"
+      # HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      Port: 8000
+      Protocol: HTTP
+      UnhealthyThresholdCount: 3
+      VpcId: 
+        Fn::ImportValue: !Sub "${ENVIRONMENTNAME}-VPC"
+      Tags: 
+        - Key: Environment
+          Value: !Ref ENVIRONMENTNAME
+        -
+          Key: Name
+          Value: !Sub ${ENVIRONMENTNAME}-WEBTARGETGROUP
+
+  WEBSERVERAUTOSCALINGGROUP:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties: 
+      HealthCheckGracePeriod: 120
+      HealthCheckType: EC2
+      LaunchConfigurationName: !Ref WEBSERVERLAUNCH
+      MaxSize: 4
+      MinSize: 2
+      TargetGroupARNs: 
+        - !Ref WEBTARGETGROUP
+      VPCZoneIdentifier: 
+      - Fn::ImportValue: 
+          !Sub "${ENVIRONMENTNAME}-PRIVSUBNETS"
+      Tags: 
+        - Key: Environment
+          Value: !Ref ENVIRONMENTNAME
+          PropagateAtLaunch: "true"
+        -
+          Key: Name
+          Value: !Sub ${ENVIRONMENTNAME}-WEBSERVERAUTOSCALINGGROUP
+          PropagateAtLaunch: "true" 
+
+  LOADBALANCER:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      SecurityGroups: 
+        - !Ref LBSECURITYGROUP
+      Subnets: 
+        - Fn::ImportValue: !Sub "${ENVIRONMENTNAME}-PUBSUBNET1"
+        - Fn::ImportValue: !Sub "${ENVIRONMENTNAME}-PUBSUBNET2"
+
+  LISTENER:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn:
+          !Ref WEBTARGETGROUP
+      LoadBalancerArn:
+        Ref: LOADBALANCER
+      Port: '80'
+      Protocol: HTTP
+
+  LBLISTENERRULE:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref WEBTARGETGROUP
+      Conditions:
+      - Field: path-pattern
+        Values: [/]
+      ListenerArn: !Ref LISTENER
+      Priority: 1
+
+Outputs:
+  StackLBDNS:
+    Description: The URL of the Load Balancer
+    Value: !Sub 
+      - http://${LBDNS}
+      - { LBDNS: !GetAtt LOADBALANCER.DNSName}
+    Export:
+      Name: !Sub "${AWS::StackName}-LB"
+
+  StackBASTIONDNS:
+    Description: The DNS of the Bastion Host
+    Value: !GetAtt BASTION.PublicDnsName
+    Export:
+      Name: !Sub "${AWS::StackName}-BASTION"

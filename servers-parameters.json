@@ -1,0 +1,34 @@
+[
+    {
+        "ParameterKey": "ENVIRONMENTNAME",
+        "ParameterValue": "Notejam"
+    },
+    {
+        "ParameterKey": "WEBPORT",
+        "ParameterValue": "80"
+    },
+    {
+        "ParameterKey": "WEBSERVERAMI",
+        "ParameterValue": "ami-0a243dbef00e96192"        
+    },
+    {
+        "ParameterKey": "BASTIONAMI",
+        "ParameterValue": "ami-0a243dbef00e96192"        
+    },
+    {
+        "ParameterKey": "WEBSERVERTYPE",
+        "ParameterValue": "t2.micro"        
+    },
+    {
+        "ParameterKey": "BASTIONTYPE",
+        "ParameterValue": "t2.micro"        
+    },
+    {
+        "ParameterKey": "BASTIONKEY",
+        "ParameterValue": "notejam"        
+    },
+    {
+        "ParameterKey": "MYIP",
+        "ParameterValue": "192.168.0.9/32"        
+    }
+]
