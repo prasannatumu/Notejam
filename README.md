@@ -26,3 +26,4 @@ The below commands in the 'UserData' section of file 'servers.yaml' deploys the 
             ./manage.py migrate
             ./manage.py runserver
 
+Please refer to 'NoteJam presentation.pptx' for more details about the architecture.
